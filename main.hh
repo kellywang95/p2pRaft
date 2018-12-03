@@ -7,6 +7,8 @@
 #include <QUdpSocket>
 #include <QMutex>
 #include <QTimer>
+#include <QStringList>
+#include <QList>
 
 class NetSocket : public QUdpSocket
 {
@@ -16,28 +18,23 @@ public:
 	NetSocket(QObject *parent);
 	~NetSocket();
 
-    	// Bind this socket to a P2Papp-specific default port.
-    	bool bind();
+    // Bind this socket to a P2Papp-specific default port.
+    bool bind();
 	// bool readUdp(QVariantMap *map);
 	int genRandNum();
-	//int getWritePort();
-	int resendRumorPort(int port);
-	void changeRandomPort();
+
+
 	void sendUdpDatagram(const QVariantMap &qMap, int port);
-	void sendUdpDatagram(const QMap<QString, QVariantMap> &qMap, int port);
-	
+	void sendUdpDatagram(const QMap<QString, QMap<quint32, QVariantMap> >&qMap, int port);
 	
 	int myPort;
-	int neighborPort;
-	int randomPort; //for anti-entropy
+
 	QHostAddress HostAddress;
 	QString originName;
 
 private:
 	int myPortMin, myPortMax;
 };
-
-
 
 class ChatDialog : public QDialog
 {
@@ -50,27 +47,52 @@ public slots:
 	void gotReturnPressed();
 	void gotReadyRead();
 	void timeoutHandler();
-	void antiEntropyHandler();
 
 private:
 	QTextEdit *textview;
 	QLineEdit *textline;
 	NetSocket *udpSocket;
 	QTimer *timeoutTimer;
-	QTimer *antiEntropyTimer;
-	
-	QVariantMap myWants;
-	QMap<QString, QMap<quint32, QString> > allMessages;
-	QVariantMap pendingMsg;
-	QMutex mutex1;  // for myWants
-	QMutex mutex2;  // for allMessages
-	QMutex mutex3;  // for pendingMsg
+	QTimer *heartbeatTimer;
 
-	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, qint32 port, bool addToMsg);
-	void writeStatusMessage(int port, QString origin, qint32 seqNo);
-	void addToMessages(QVariantMap &qMap);
-	void handleStatusMsg(QVariantMap &gotWants, quint16 port);
-	void handleRumorMsg(QVariantMap &rumorMap, quint16 port);
+	QString state;
+	quint32 nextSeqNo;
+	quint32 nextSeqToShow;
+
+	bool startRaft;
+
+	quint32 leaderPort;
+
+	QStringList myLeaderVote;
+
+	QMap<quint32, QStringList> msgCommits;
+	QMap<quint32, bool> declineNodes;
+	QMap<quint32, QString> nodeStates;
+	QMap<quint32, QVariantMap> commitedMsgs;
+	QMap<quint32, QVariantMap> uncommitedMsgs;
+
+	void addToUncommitedMsgs(QVariantMap &qMap);
+	void addToCommitedMsgs(QVariantMap &qMap);
+
+	void proposeMsg(QVariantMap &qMap);
+	void handleProposeMsg(QVariantMap &qMap);
+	void approveMsg(QVariantMap &qMap);
+	void handleApproveMsg(QVariantMap &qMap);
+	void commitMsg(QVariantMap &qMap);
+	void handleCommitMsg(QVariantMap &qMap);
+
+	void proposeLeader();
+	void handleProposeLeader(qint32 port);
+	void approveLeader(qint32 port);
+	void handleApproveLeader(qint32 port);
+	void commitLeader();
+	void handleCommitLeader(qint32 port);
+
+	void sendAllMsg(qint32 port);
+	void handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap);
+
+	void sendHeartbeat();
+	void handleHeartbeat(qint32 port);
 };
 
 
