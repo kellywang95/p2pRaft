@@ -63,16 +63,18 @@ private:
 
 	quint32 leaderPort;
 
-	QStringList myLeaderVote;
+	QStringList VoteToMe;  // lists of nodes that vote me as the leader
+	quint32 currentVote;   // vote who as the leader in current round
 
-	QMap<quint32, QStringList> msgCommits;
+	QMap<quint32, QStringList> msgApproves;
 	QMap<quint32, bool> declineNodes;
 	QMap<quint32, QString> nodeStates;
-	QMap<quint32, QVariantMap> commitedMsgs;
-	QMap<quint32, QVariantMap> uncommitedMsgs;
 
-	void addToUncommitedMsgs(QVariantMap &qMap);
-	void addToCommitedMsgs(QVariantMap &qMap);
+	QMap<quint32, QVariantMap> committedMsgs;
+	QMap<quint32, QVariantMap> uncommittedMsgs;
+
+	void addToUncommittedMsgs(QVariantMap &qMap);
+	void addToCommittedMsgs(QVariantMap &qMap);
 
 	void proposeMsg(QVariantMap &qMap);
 	void handleProposeMsg(QVariantMap &qMap);
@@ -90,6 +92,7 @@ private:
 
 	void sendAllMsg(qint32 port);
 	void handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap);
+	void sendMsgToOthers(QVariantMap &qMap);
 
 	void sendHeartbeat();
 	void handleHeartbeat(qint32 port);

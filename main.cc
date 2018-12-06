@@ -3,7 +3,7 @@
 
 #include <QVBoxLayout>
 #include <QApplication>
-#include <QDebug>
+#include <qDebug>
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QDateTime>
@@ -47,6 +47,7 @@ ChatDialog::ChatDialog()
             this, SLOT(timeoutHandler())); 
 
 	heartbeatTimer = new QTimer(this);
+	heartbeatTimer->start(100);
 	connect(heartbeatTimer, SIGNAL(timeout()),
             this, SLOT(heartbeatHandler())); 
 
@@ -58,6 +59,7 @@ ChatDialog::ChatDialog()
 
 	nextSeqNo = 0;
 	nextSeqToShow = 0;
+	currentVote = 0;
 
 	// Register a callback on the textline's returnPressed signal
 	// so that we can send the message entered by the user.
@@ -72,9 +74,9 @@ void ChatDialog::gotReturnPressed()
 {
 	QString message = textline->text();
 	auto messageParts = message.split(" ");
-	qDebug("parsed input: ");
+	qDebug() << "parsed input: ";
 	for (auto str : messageParts) {
-		qDebug(str);
+		qDebug() << str;
 	}
 
 	if (messageParts.size() == 1) {
@@ -84,8 +86,8 @@ void ChatDialog::gotReturnPressed()
 			this->textview->append("-----------------");
 			this->textview->append("----History:-----");
 			this->textview->append("-----------------");
-			for (qint32 i = 0; i < commitedMsgs.size(); i++) {
-				this->textview->append(commitedMsgs[i]["Origin"] + ">: " + commitedMsgs[i]["ChatText"]);
+			for (qint32 i = 0; i < committedMsgs.size(); i++) {
+				this->textview->append(committedMsgs[i]["Origin"] + ">: " + committedMsgs[i]["ChatText"]);
 			}
 			this->textview->append("-----------------");
 			this->textview->append("---History End---");
@@ -157,11 +159,11 @@ RECV:
 			handleProposeMsg(msgMap);
 		} else if (msgMap["Type"] == QString::fromStdString("MsgApprove")) {
 			done = true;
-			handleApproveLeader(msgMap);
+			handleApproveMsg(msgMap);
 		} else if (msgMap["Type"] == QString::fromStdString("MsgCommit")) {
 			done = true;
-			handleCommitLeader(msgMap);
-		} else if (msgMap["Type"] == QString::fromStdString("heartBeat")) {
+			handleCommitMsg(msgMap);
+		} else if (msgMap["Type"] == QString::fromStdString("HeartBeat")) {
 			done = true;
 			handleHeartbeat(msgMap["Origin"].toInt());
 		}
@@ -182,52 +184,71 @@ RECV:
 void ChatDialog::timeoutHandler() {
 	
 	// TODO Check state and decide wat 2 do
-	qDebug("timeout!");
+	qDebug() << "timeout!";
+
+	// reset currentVote and VoteToMe
+	currentVote = 0;
+	VoteToMe.clear();
+	leaderPort = 0;
+
 	timeoutTimer->start(500);
 }
 
 void ChatDialog::heartbeatHandler() {
-	if (state != QString::fromStdString("LEADER")) {
-		heartbeatTimer->stop();
+	qDebug() << "in heartbeatHandler!";
+
+	if (state == QString::fromStdString("LEADER")) {
+		qDebug() << "send heartBeat!";
+		sendHeartbeat();
+		timeoutTimer->start(500);
 	}
-	qDebug("heartBeat!");
-	sendHeartbeat();
 	heartbeatTimer->start(100);
-	timeoutTimer->start(500);
 }
 
-void ChatDialog::addToUncommitedMsgs(QVariantMap &qMap) {
+void ChatDialog::addToUncommittedMsgs(QVariantMap &qMap) {
 	QString message = qMap["ChatText"].toString();
 	QString origin = qMap["Origin"].toString();
 	quint32 seqNo = qMap["SeqNo"].toInt();
 	
 	if (message.isEmpty()) return;
 	
-	if (!uncommitedMsgs.contains(seqNo)){
-		// TODO check if it's in commited??
-		uncommitedMsgs.insert(seqNo, qMap);
+	if (!uncommittedMsgs.contains(seqNo)){
+		// TODO check if it's in committed??
+		uncommittedMsgs.insert(seqNo, qMap);
 	} else {
 		return;
 		// TODO ??
 	}
 }
-void ChatDialog::addToCommitedMsgs(QVariantMap &qMap) {
+
+void ChatDialog::removeFromUncommittedMsgs(QVariantMap &qMap) {
 	QString message = qMap["ChatText"].toString();
 	QString origin = qMap["Origin"].toString();
 	quint32 seqNo = qMap["SeqNo"].toInt();
 	
 	if (message.isEmpty()) return;
 	
-	if (!commitedMsgs.contains(seqNo)){
-		// TODO check if it's in uncommited??
-		commitedMsgs.insert(seqNo, qMap);
-	} else {
-		return;
-		// TODO ??
+	if (uncommittedMsgs.contains(seqNo)){
+		uncommittedMsgs.remove(seqNo);
 	}
+}
+
+
+void ChatDialog:: addToCommittedMsgs(QVariantMap &qMap) {
+	QString message = qMap["ChatText"].toString();
+	QString origin = qMap["Origin"].toString();
+	quint32 seqNo = qMap["SeqNo"].toInt();
 	
-	while (commitedMsgs.contains(nextSeqToShow)) {
-		this->textview->append(commitedMsgs[nextSeqToShow]["Origin"] + ">: " + commitedMsgs[nextSeqToShow]["ChatText"]);
+	if (message.isEmpty()) return;
+	
+	if (committedMsgs.contains(seqNo)){
+		return;
+	}
+
+	committedMsgs.insert(seqNo, qMap);
+	// if any new messages, display in window
+	while (committedMsgs.contains(nextSeqToShow)) {
+		this->textview->append(committedMsgs[nextSeqToShow]["Origin"] + ">: " + committedMsgs[nextSeqToShow]["ChatText"]);
 		nextSeqToShow++;
 	}
 }
@@ -235,47 +256,206 @@ void ChatDialog::addToCommitedMsgs(QVariantMap &qMap) {
 
 
 void ChatDialog::proposeMsg(QVariantMap &qMap) {
+	// if is leader: send to all other nodes
+	if (state == QString::fromStdString("LEADER")) {
+		qMap["SeqNo"] = QString:number(nextSeqNo);
+		nextSeqNo++;
+		for (int p = myPortMin; p <= myPortMax; p++) {
+			if (p != myPort) {
+				udpSocket->sendUdpDatagram(qMap, p);
+			}
+		}
+	} else {
+		// if not leader, send to leader only
+		udpSocket->sendUdpDatagram(qMap, leaderPort);
+	}
+	
+
 }
+
+
 void ChatDialog::handleProposeMsg(QVariantMap &qMap) {
+	QString origin = qMap["Origin"].toString();
+	if (state == QString::fromStdString("LEADER")) {
+		proposeMsg(qMap);
+
+	} else if (nodeStates[origin] ==  QString::fromStdString("LEADER")) {
+		// elif origin is leader: send approveMsg
+		approveMsg(qMap);
+	}
+
 }
+
+
 void ChatDialog::approveMsg(QVariantMap &qMap) {
+	QVariantMap approveMap = qMap;
+	approveMap["Type"] = QString:fromStdString("MsgApprove");
+	udpSocket->sendUdpDatagram(approveMap, leaderPort);
 }
+
 void ChatDialog::handleApproveMsg(QVariantMap &qMap){
+	// add to msgApproves
+	quint32 seqNo = qMap["SeqNo"].toInt();
+	QString origin = qMap["Origin"].toString();
+	if (!msgApproves.contains(seqNo)) {
+		QStringList initList;
+		msgApproves.insert(seqNo,initList);
+	}
+	if (!msgApproves[seqNo].contains(origin)) {
+		msgApproves[seqNo].append(origin);
+	}
+	
+
+	// check if votes reach majority
+	// call commitMsg
+	if (msgApproves[seqNo].length() >= 3) {
+		commitMsg(qMap);
+	}
+
+
+
 }
 void ChatDialog::commitMsg(QVariantMap &qMap) {
+	qDebug() << "in commitMsg::::" << qMap["ChatText"].toString();
+	// add to committedMsgs
+	addToCommittedMsgs(qMap);
+
+	// send to others
+	QVariantMap commitMap = qMap;
+	commitMap["Type"] = QString:fromStdString("MsgCommit");
+
+	sendMsgToOthers(commitMap);
+
+	// remove from uncommittedMsgs
+	removeFromUncommittedMsgs(qMap);
+
+
 }
+
 void ChatDialog::handleCommitMsg(QVariantMap &qMap) {
+	qDebug() << "in handleCommitMsg" << qMap["ChatText"].toString();
+	quint32 seqNo = qMap["SeqNo"].toInt();
+	QString message = qMap["ChatText"].toString();
+
+	addToCommittedMsgs(qMap);
+	removeFromUncommittedMsgs(qMap);
 }
+
 
 void ChatDialog::proposeLeader() {
+	qDebug() << "propose itself to be leader";
+
+	currentVote = udpSocket.myPort;
+	VoteToMe.append(udpSocket.originName);
+
+	QVariantMap qMap;
+	qMap["Type"] = QString:fromStdString("LeaderPropose");
+	qMap["Origin"] = QString:number(udpSocket.myPort);
+
+	// send LeaderPropose msg to every other nodes
+	sendMsgToOthers(qMap);
 }
-void ChatDialog::handleProposeLeader(qint32 port) {
-	if (TODO: reached major) {
+
+
+void ChatDialog::handleProposeLeader(quint32 port) {
+	// check if it has voted to anywhere in this round
+	if (currentVote == 0) {
+		// if not voted yet in this round
+		approveLeader(port);
+	} else {
+		// ignore this proposal
+		return;
+	}
+
+	// ??? heartbeatTimer->start(100);
+}
+
+
+void ChatDialog::approveLeader(quint32 port) {
+	// send LeaderApprove Msg
+	QVariantMap qMap;
+	qMap["Type"] = QString::fromStdString("LeaderApprove");
+	qMap["Origin"] = QString:number(udpSocket.myPort);
+	udpSocket->sendUdpDatagram(qMap, port);
+}
+
+
+void ChatDialog::handleApproveLeader(quint32 port) {
+	// add approves to VoteToMe
+	QString fromPort = QString::number(port);
+	if (VoteToMe.contains(fromPort)) return;
+	VoteToMe.append(fromPort);
+
+	// check if reach majority
+	if (VoteToMe.length() >=3 ) {
+		// set myself to be the leader and commit to others
 		state = QString::fromStdString("LEADER");
-		heartbeatTimer->start(100);
+		commitLeader(udpSocket.myPort);
+		leaderPort = udpSocket.myPort;
 	}
 }
-void ChatDialog::approveLeader(qint32 port) {
-}
-void ChatDialog::handleApproveLeader(qint32 port) {
-}
-void ChatDialog::sendHeartbeat() {
-}
-void ChatDialog::handleHeartbeat(qint32 port) {	
+
+void ChatDialog::commitLeader(quint32 port) {
+	QVariantMap qMap;
+	qMap["Type"] = QString:fromStdString("LeaderCommit");
+	qMap["Origin"] = QString:number(udpSocket.myPort);
+
+	//send leaderCommit msg to others
+	sendMsgToOthers(qMap);
 }
 
-void ChatDialog::sendAllMsg(qint32 port) {
-	// qMap["Type"][0]["Type"] = "ALLMSG";
-	// qMap["Commited"] =
-	// qMap["Uncommited"] =
+
+void ChatDialog::handleCommitLeader(quint32 port) {
+	// set leaderPort to be the new Leader
+	leaderPort = port;
+
 }
+
+
+void ChatDialog::sendHeartbeat() {
+	 //  leader send heartbeat to others
+	QVariantMap qMap;
+	qMap["Type"] = QString:fromStdString("HeartBeat");
+	qMap["Origin"] = QString:number(udpSocket.myPort);
+
+	sendMsgToOthers(qMap);
+
+}
+
+void ChatDialog::handleHeartbeat(quint32 port) {
+
+	if (port != leaderPort) {
+		leaderPort = port;
+	}
+
+	// reset timeout
+	timeoutTimer->start(500);
+
+}
+
+// send msg to all the other nodes
+void ChatDialog::sendMsgToOthers(QVariantMap &qMap) {
+	for (int p = udpSocket.myPortMin; p <= udpSocket.myPortMax; p++) {
+		if (p != udpSocket.myPort) {
+			udpSocket->sendUdpDatagram(qMap, p);
+		}
+	}
+
+}
+void ChatDialog::sendAllMsg(quint32 port) {
+	QVariantMap qMap;
+	qMap["Type"][0]["Type"] = "ALLMSG";
+	qMap["committed"] = committedMsgs;
+	qMap["Uncommitted"] = uncommittedMsgs;
+	
+
+}
+
+
 void ChatDialog::handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap){
+
 }
 
-void ChatDialog::sendHeartbeat() {
-}
-void ChatDialog::handleHeartbeat(qint32 port) {
-}
 
 NetSocket::NetSocket(QObject *parent = NULL): QUdpSocket(parent)
 {
@@ -287,11 +467,10 @@ NetSocket::NetSocket(QObject *parent = NULL): QUdpSocket(parent)
 	// (which are quite possible).
 	// We use the range from 32768 to 49151 for this purpose.
 	myPortMin = 32768 + (getuid() % 4096)*4;
-	myPortMax = myPortMin + 3;
+	myPortMax = myPortMin + 4;
 	// get host address
 	HostAddress = QHostAddress(QHostAddress::LocalHost);
     QHostInfo info;
-    originName = QString::number(HostAddress);
 }
 
 
@@ -304,6 +483,7 @@ bool NetSocket::bind()
 		if (QUdpSocket::bind(p)) {
 			qDebug() << "bound to UDP port " << p;
 			myPort = p;
+			originName = QString::number(myPort);
 			return true;
 		}
 	}
