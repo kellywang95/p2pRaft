@@ -32,7 +32,7 @@ public:
 	QHostAddress HostAddress;
 	QString originName;
 
-private:
+//private:
 	int myPortMin, myPortMax;
 };
 
@@ -47,6 +47,7 @@ public slots:
 	void gotReturnPressed();
 	void gotReadyRead();
 	void timeoutHandler();
+	void heartbeatHandler();
 
 private:
 	QTextEdit *textview;
@@ -75,6 +76,7 @@ private:
 
 	void addToUncommittedMsgs(QVariantMap &qMap);
 	void addToCommittedMsgs(QVariantMap &qMap);
+	void removeFromUncommittedMsgs(QVariantMap &qMap);
 
 	void proposeMsg(QVariantMap &qMap);
 	void handleProposeMsg(QVariantMap &qMap);
@@ -84,18 +86,18 @@ private:
 	void handleCommitMsg(QVariantMap &qMap);
 
 	void proposeLeader();
-	void handleProposeLeader(qint32 port);
-	void approveLeader(qint32 port);
-	void handleApproveLeader(qint32 port);
-	void commitLeader();
-	void handleCommitLeader(qint32 port);
+	void handleProposeLeader(quint32 port);
+	void approveLeader(quint32 port);
+	void handleApproveLeader(quint32 port);
+	void commitLeader(quint32 port);
+	void handleCommitLeader(quint32 port);
 
-	void sendAllMsg(qint32 port);
+	void sendAllMsg(quint32 port);
 	void handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap);
 	void sendMsgToOthers(QVariantMap &qMap);
 
 	void sendHeartbeat();
-	void handleHeartbeat(qint32 port);
+	void handleHeartbeat(quint32 port);
 };
 
 
