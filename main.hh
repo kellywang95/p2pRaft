@@ -48,6 +48,7 @@ public slots:
 	void gotReadyRead();
 	void timeoutHandler();
 	void heartbeatHandler();
+	void restoreTimeoutHandler();
 
 private:
 	QTextEdit *textview;
@@ -55,6 +56,7 @@ private:
 	NetSocket *udpSocket;
 	QTimer *timeoutTimer;
 	QTimer *heartbeatTimer;
+	QTimer *restoreWaitingTimer;
 
 	quint32 nextSeqNo;
 	quint32 nextSeqToShow;
@@ -91,8 +93,11 @@ private:
 	void commitLeader(quint32 port);
 	void handleCommitLeader(quint32 port);
 
-	void sendAllMsg(quint32 port);
+	void requestAllMsg();
+	void handleRequestAllMsg(quint32 port);
+	void sendAllMsg(quint32 port);	
 	void handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&qMap);
+
 	void sendMsgToAll(const QVariantMap &qMap);
 	void sendMsgToOthers(const QVariantMap &qMap);
 
