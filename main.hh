@@ -73,16 +73,16 @@ private:
 	QMap<quint32, QVariantMap> committedMsgs;
 	QMap<quint32, QVariantMap> uncommittedMsgs;
 
-	void addToUncommittedMsgs(QVariantMap &qMap);
-	void addToCommittedMsgs(QVariantMap &qMap);
-	void removeFromUncommittedMsgs(QVariantMap &qMap);
+	void addToUncommittedMsgs(const QVariantMap &qMap);
+	void addToCommittedMsgs(const QVariantMap &qMap);
+	void removeFromUncommittedMsgs(const QVariantMap &qMap);
 
-	void proposeMsg(QVariantMap &qMap);
-	void handleProposeMsg(QVariantMap &qMap);
-	void approveMsg(QVariantMap &qMap);
-	void handleApproveMsg(QVariantMap &qMap);
-	void commitMsg(QVariantMap &qMap);
-	void handleCommitMsg(QVariantMap &qMap);
+	void proposeMsg(const QVariantMap &qMap);
+	void handleProposeMsg(const QVariantMap &qMap);
+	void approveMsg(const QVariantMap &qMap);
+	void handleApproveMsg(const QVariantMap &qMap);
+	void commitMsg(const QVariantMap &qMap);
+	void handleCommitMsg(const QVariantMap &qMap);
 
 	void proposeLeader();
 	void handleProposeLeader(quint32 port);
@@ -92,13 +92,14 @@ private:
 	void handleCommitLeader(quint32 port);
 
 	void sendAllMsg(quint32 port);
-	void handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap);
-	void sendMsgToAll(QVariantMap &qMap);
+	void handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&qMap);
+	void sendMsgToAll(const QVariantMap &qMap);
+	void sendMsgToOthers(const QVariantMap &qMap);
 
 	void sendHeartbeat();
 	void handleHeartbeat(quint32 port);
 
-	void ChatDialog::updateLeader(quint32 port);
+	void updateLeader(quint32 port);
 	QString myStates();
 };
 

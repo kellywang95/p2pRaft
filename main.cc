@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QTimer>
 #include <QMutex>
+#include <string>
 #include "main.hh"
 
 ChatDialog::ChatDialog()
@@ -42,12 +43,12 @@ ChatDialog::ChatDialog()
 		exit(1);
 	
 	timeoutTimer = new QTimer(this);
-	timeoutTimer->start(1000);
+	timeoutTimer->start(2000);
 	connect(timeoutTimer, SIGNAL(timeout()),
             this, SLOT(timeoutHandler())); 
 
 	heartbeatTimer = new QTimer(this);
-	heartbeatTimer->start(300);
+	heartbeatTimer->start(800);
 	connect(heartbeatTimer, SIGNAL(timeout()),
             this, SLOT(heartbeatHandler())); 
 
@@ -145,6 +146,8 @@ RECV:
 
 	if (msgMap.contains("Type"))
 	{
+		qDebug() << "recv:";
+		qDebug() << msgMap;
 		if (msgMap["Type"] == QString::fromStdString("LeaderPropose")) {
 			done = true;
 			handleProposeLeader(msgMap["Origin"].toInt());
@@ -197,7 +200,7 @@ void ChatDialog::timeoutHandler() {
 	//PROPOSE
 	proposeLeader();
 
-	timeoutTimer->start(1000);
+	timeoutTimer->start(2000);
 }
 
 void ChatDialog::heartbeatHandler() {
@@ -206,28 +209,29 @@ void ChatDialog::heartbeatHandler() {
 	if (myStates() == QString::fromStdString("LEADER")) {
 		qDebug() << "send heartBeat!";
 		sendHeartbeat();
-		timeoutTimer->start(1000);
+		timeoutTimer->start(2000);
 	}
-	heartbeatTimer->start(300);
+	heartbeatTimer->start(800);
 }
 
-void ChatDialog::addToUncommittedMsgs(QVariantMap &qMap) {
-	QString message = qMap["ChatText"].toString();
-	QString origin = qMap["Origin"].toString();
-	quint32 seqNo = qMap["SeqNo"].toInt();
+void ChatDialog::addToUncommittedMsgs(const QVariantMap &qMap) {
+	QVariantMap msg = qMap;
+	QString message = msg["ChatText"].toString();
+	QString origin = msg["Origin"].toString();
+	quint32 seqNo = msg["SeqNo"].toInt();
 	
 	if (message.isEmpty()) return;
 	
 	if (!uncommittedMsgs.contains(seqNo)){
 		// TODO check if it's in committed??
-		uncommittedMsgs.insert(seqNo, qMap);
+		uncommittedMsgs.insert(seqNo, msg);
 	} else {
 		return;
 		// TODO ??
 	}
 }
 
-void ChatDialog::removeFromUncommittedMsgs(QVariantMap &qMap) {
+void ChatDialog::removeFromUncommittedMsgs(const QVariantMap &qMap) {
 	QString message = qMap["ChatText"].toString();
 	QString origin = qMap["Origin"].toString();
 	quint32 seqNo = qMap["SeqNo"].toInt();
@@ -240,10 +244,11 @@ void ChatDialog::removeFromUncommittedMsgs(QVariantMap &qMap) {
 }
 
 
-void ChatDialog:: addToCommittedMsgs(QVariantMap &qMap) {
-	QString message = qMap["ChatText"].toString();
-	QString origin = qMap["Origin"].toString();
-	quint32 seqNo = qMap["SeqNo"].toInt();
+void ChatDialog:: addToCommittedMsgs(const QVariantMap &qMap) {
+	QVariantMap msg = qMap;
+	QString message = msg["ChatText"].toString();
+	QString origin = msg["Origin"].toString();
+	quint32 seqNo = msg["SeqNo"].toInt();
 	
 	if (message.isEmpty()) return;
 	
@@ -251,7 +256,7 @@ void ChatDialog:: addToCommittedMsgs(QVariantMap &qMap) {
 		return;
 	}
 
-	committedMsgs.insert(seqNo, qMap);
+	committedMsgs.insert(seqNo, msg);
 	// if any new messages, display in window
 	while (committedMsgs.contains(nextSeqToShow)) {
 		this->textview->append(committedMsgs[nextSeqToShow]["Origin"].toString() + ">: " + committedMsgs[nextSeqToShow]["ChatText"].toString());
@@ -261,44 +266,52 @@ void ChatDialog:: addToCommittedMsgs(QVariantMap &qMap) {
 
 
 
-void ChatDialog::proposeMsg(QVariantMap &qMap) {
+void ChatDialog::proposeMsg(const QVariantMap &qMap) {
 	// if is leader: send to all other nodes
+	qDebug() << "-----------------";
+	qDebug() << "Enter proposeMsg:";
+	qDebug() << qMap;
+	qDebug() << "-----------------";
+	QVariantMap proposeMap = qMap;
+	proposeMap["Type"] = QString::fromStdString("MsgPropose");
 	if (myStates() == QString::fromStdString("LEADER")) {
-		qMap["SeqNo"] = QString::number(nextSeqNo);
+		proposeMap["SeqNo"] = QString::number(nextSeqNo);
 		nextSeqNo++;
-		sendMsgToAll(qMap);
+		addToUncommittedMsgs(proposeMap);
+		sendMsgToOthers(proposeMap);
 	} else {
 		// if not leader, send to leader only
-		udpSocket->sendUdpDatagram(qMap, leaderPort);
+		udpSocket->sendUdpDatagram(proposeMap, leaderPort);
 	}
-	
-
 }
 
 
-void ChatDialog::handleProposeMsg(QVariantMap &qMap) {
+void ChatDialog::handleProposeMsg(const QVariantMap &qMap) {
+	QVariantMap proposeMap = qMap;
+	
 	QString origin = qMap["Origin"].toString();
 	quint32 originPort = origin.toInt();
 	if (myStates() == QString::fromStdString("LEADER")) {
-		proposeMsg(qMap);
+		proposeMsg(proposeMap);
 	} else if (nodeStates[originPort] ==  QString::fromStdString("LEADER")) {
 		// elif origin is leader: send approveMsg
-		approveMsg(qMap);
+		addToUncommittedMsgs(proposeMap);
+		approveMsg(proposeMap);
 	}
-
 }
 
 
-void ChatDialog::approveMsg(QVariantMap &qMap) {
+void ChatDialog::approveMsg(const QVariantMap &qMap) {
 	QVariantMap approveMap = qMap;
 	approveMap["Type"] = QString::fromStdString("MsgApprove");
 	udpSocket->sendUdpDatagram(approveMap, leaderPort);
 }
 
-void ChatDialog::handleApproveMsg(QVariantMap &qMap){
+void ChatDialog::handleApproveMsg(const QVariantMap &qMap){
 	// add to msgApproves
-	quint32 seqNo = qMap["SeqNo"].toInt();
-	QString origin = qMap["Origin"].toString();
+	QVariantMap approveMap = qMap;
+	quint32 seqNo = approveMap["SeqNo"].toInt();
+	QString origin = approveMap["Origin"].toString();
 	if (!msgApproves.contains(seqNo)) {
 		QStringList initList;
 		msgApproves.insert(seqNo,initList);
@@ -311,36 +324,34 @@ void ChatDialog::handleApproveMsg(QVariantMap &qMap){
 	// check if votes reach majority
 	// call commitMsg
 	if (msgApproves[seqNo].length() >= 3) {
-		commitMsg(qMap);
+		commitMsg(approveMap);
 	}
-
-
-
 }
-void ChatDialog::commitMsg(QVariantMap &qMap) {
+void ChatDialog::commitMsg(const QVariantMap &qMap) {
+	QVariantMap commitMap = qMap;
 	qDebug() << "in commitMsg::::" << qMap["ChatText"].toString();
 	// add to committedMsgs
-	addToCommittedMsgs(qMap);
+	addToCommittedMsgs(commitMap);
 
 	// send to others
-	QVariantMap commitMap = qMap;
 	commitMap["Type"] = QString::fromStdString("MsgCommit");
 
-	sendMsgToAll(commitMap);
+	sendMsgToOthers(commitMap);
 
 	// remove from uncommittedMsgs
-	removeFromUncommittedMsgs(qMap);
+	removeFromUncommittedMsgs(commitMap);
 
 
 }
 
-void ChatDialog::handleCommitMsg(QVariantMap &qMap) {
+void ChatDialog::handleCommitMsg(const QVariantMap &qMap) {
+	QVariantMap commitMap = qMap;
 	qDebug() << "in handleCommitMsg" << qMap["ChatText"].toString();
 	//quint32 seqNo = qMap["SeqNo"].toInt();
 	//QString message = qMap["ChatText"].toString();
 
-	addToCommittedMsgs(qMap);
-	removeFromUncommittedMsgs(qMap);
+	addToCommittedMsgs(commitMap);
+	removeFromUncommittedMsgs(commitMap);
 }
 
 
@@ -420,7 +431,7 @@ void ChatDialog::sendHeartbeat() {
 	qMap["Type"] = QString::fromStdString("HeartBeat");
 	qMap["Origin"] = QString::number(udpSocket->myPort);
 
-	sendMsgToAll(qMap);
+	sendMsgToOthers(qMap);
 
 }
 
@@ -431,17 +442,30 @@ void ChatDialog::handleHeartbeat(quint32 port) {
 	}
 
 	// reset timeout
-	timeoutTimer->start(1000);
+	timeoutTimer->start(2000);
 
 }
 
 // send msg to all the nodes
-void ChatDialog::sendMsgToAll(QVariantMap &qMap) {
+void ChatDialog::sendMsgToAll(const QVariantMap &qMap) {
+	QVariantMap msg = qMap;
 	for (int p = udpSocket->myPortMin; p <= udpSocket->myPortMax; p++) {
-		udpSocket->sendUdpDatagram(qMap, p);
+		udpSocket->sendUdpDatagram(msg, p);
 		//if (p != udpSocket->myPort) {
 		//	udpSocket->sendUdpDatagram(qMap, p);
 		//}
+	}
+
+}
+
+// send msg to all other nodes
+void ChatDialog::sendMsgToOthers(const QVariantMap &qMap) {
+	QVariantMap msg = qMap;
+	for (int p = udpSocket->myPortMin; p <= udpSocket->myPortMax; p++) {
+		if (p != udpSocket->myPort) {
+			qDebug() << "sending " << msg << " to " << QString::number(p);
+			udpSocket->sendUdpDatagram(msg, p);
+		}
 	}
 
 }
@@ -460,7 +484,7 @@ void ChatDialog::sendAllMsg(quint32 port) {
 }
 
 
-void ChatDialog::handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap){
+void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&qMap){
 	return;
 }
 
