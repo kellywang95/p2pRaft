@@ -56,7 +56,6 @@ private:
 	QTimer *timeoutTimer;
 	QTimer *heartbeatTimer;
 
-	QString state;
 	quint32 nextSeqNo;
 	quint32 nextSeqToShow;
 
@@ -94,10 +93,13 @@ private:
 
 	void sendAllMsg(quint32 port);
 	void handleAllMsg(QMap<QString, QMap<quint32, QVariantMap> >&qMap);
-	void sendMsgToOthers(QVariantMap &qMap);
+	void sendMsgToAll(QVariantMap &qMap);
 
 	void sendHeartbeat();
 	void handleHeartbeat(quint32 port);
+
+	void ChatDialog::updateLeader(quint32 port);
+	QString myStates();
 };
 
 
