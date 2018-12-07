@@ -276,8 +276,11 @@ void ChatDialog::proposeMsg(const QVariantMap &qMap) {
 	proposeMap["Type"] = QString::fromStdString("MsgPropose");
 	if (myStates() == QString::fromStdString("LEADER")) {
 		proposeMap["SeqNo"] = QString::number(nextSeqNo);
-		nextSeqNo++;
 		addToUncommittedMsgs(proposeMap);
+		QStringList initList;
+		msgApproves.insert(nextSeqNo,initList);
+		msgApproves[nextSeqNo].append(udpSocket->originName);
+		nextSeqNo++;
 		sendMsgToOthers(proposeMap);
 	} else {
 		// if not leader, send to leader only
@@ -287,23 +290,29 @@ void ChatDialog::proposeMsg(const QVariantMap &qMap) {
 
 
 void ChatDialog::handleProposeMsg(const QVariantMap &qMap) {
+	qDebug() << "in handleProposeMsg";
 	QVariantMap proposeMap = qMap;
 	
 	QString origin = qMap["Origin"].toString();
 	quint32 originPort = origin.toInt();
 	if (myStates() == QString::fromStdString("LEADER")) {
 		proposeMsg(proposeMap);
-	} else if (nodeStates[originPort] ==  QString::fromStdString("LEADER")) {
-		// elif origin is leader: send approveMsg
+	// } else if (nodeStates[originPort] ==  QString::fromStdString("LEADER")) {
+	} else {
 		addToUncommittedMsgs(proposeMap);
+		qDebug() << "hereeeee";
 		approveMsg(proposeMap);
 	}
 }
 
 
 void ChatDialog::approveMsg(const QVariantMap &qMap) {
+	qDebug() << "in approveMsg";
+	qDebug() << "leaderPort" << QString::number(leaderPort);
+	qDebug() << qMap;
 	QVariantMap approveMap = qMap;
 	approveMap["Type"] = QString::fromStdString("MsgApprove");
+	approveMap["Approver"] = udpSocket->originName;
 	udpSocket->sendUdpDatagram(approveMap, leaderPort);
 }
 
@@ -311,16 +320,11 @@ void ChatDialog::handleApproveMsg(const QVariantMap &qMap){
 	// add to msgApproves
 	QVariantMap approveMap = qMap;
 	quint32 seqNo = approveMap["SeqNo"].toInt();
-	QString origin = approveMap["Origin"].toString();
-	if (!msgApproves.contains(seqNo)) {
-		QStringList initList;
-		msgApproves.insert(seqNo,initList);
-	}
-	if (!msgApproves[seqNo].contains(origin)) {
-		msgApproves[seqNo].append(origin);
+	QString approver = approveMap["Approver"].toString();
+	if (!msgApproves[seqNo].contains(approver)) {
+		msgApproves[seqNo].append(approver);
 	}
 	
-
 	// check if votes reach majority
 	// call commitMsg
 	if (msgApproves[seqNo].length() >= 3) {
