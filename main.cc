@@ -42,7 +42,7 @@ ChatDialog::ChatDialog()
 		exit(1);
 	
 	timeoutTimer = new QTimer(this);
-	timeoutTimer->start(500);
+	timeoutTimer->start(1000);
 	connect(timeoutTimer, SIGNAL(timeout()),
             this, SLOT(timeoutHandler())); 
 
@@ -195,7 +195,7 @@ void ChatDialog::timeoutHandler() {
 	//PROPOSE
 	proposeLeader();
 
-	timeoutTimer->start(500);
+	timeoutTimer->start(1000);
 }
 
 void ChatDialog::heartbeatHandler() {
@@ -346,8 +346,8 @@ void ChatDialog::handleCommitMsg(QVariantMap &qMap) {
 void ChatDialog::proposeLeader() {
 	qDebug() << "propose itself to be leader";
 
-	currentVote = udpSocket->myPort;
-	VoteToMe.append(udpSocket->originName);
+	//currentVote = udpSocket->myPort;
+	//VoteToMe.append(udpSocket->originName);
 
 	QVariantMap qMap;
 	qMap["Type"] = QString::fromStdString("LeaderPropose");
@@ -359,6 +359,7 @@ void ChatDialog::proposeLeader() {
 
 
 void ChatDialog::handleProposeLeader(quint32 port) {
+	qDebug() << "in handleProposeLeader:::" << QString::number(port);
 	// check if it has voted to anywhere in this round
 	if (currentVote == 0) {
 		// if not voted yet in this round
@@ -437,12 +438,14 @@ void ChatDialog::handleHeartbeat(quint32 port) {
 // send msg to all the other nodes
 void ChatDialog::sendMsgToOthers(QVariantMap &qMap) {
 	for (int p = udpSocket->myPortMin; p <= udpSocket->myPortMax; p++) {
-		if (p != udpSocket->myPort) {
-			udpSocket->sendUdpDatagram(qMap, p);
-		}
+		udpSocket->sendUdpDatagram(qMap, p);
+		//if (p != udpSocket->myPort) {
+		//	udpSocket->sendUdpDatagram(qMap, p);
+		//}
 	}
 
 }
+
 void ChatDialog::sendAllMsg(quint32 port) {
 	return;
 
