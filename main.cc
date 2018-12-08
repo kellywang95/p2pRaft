@@ -227,7 +227,7 @@ void ChatDialog::timeoutHandler() {
 	// qDebug() << "timeout!";
 
 	// reset currentVote and VoteToMe
-	voteLeaderRound++;
+	if (startRaft) voteLeaderRound++;
 	currentVote = 0;
 	VoteToMe.clear();
 	leaderPort = 0;
