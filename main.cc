@@ -62,7 +62,6 @@ ChatDialog::ChatDialog()
 	}
 
 	nextSeqNo = 0;
-	nextSeqToShow = 0;
 	currentVote = 0;
 
 	// Register a callback on the textline's returnPressed signal
@@ -91,8 +90,8 @@ void ChatDialog::gotReturnPressed()
 			this->textview->append("-----------------");
 			this->textview->append("----History:-----");
 			this->textview->append("-----------------");
-			for (qint32 i = 0; i < committedMsgs.size(); i++) {
-				this->textview->append(committedMsgs[i]["Origin"].toString() + ">: " + committedMsgs[i]["ChatText"].toString());
+			for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgs.begin(); iter != committedMsgs.end(); ++iter) {
+				this->textview->append(iter.value()["Origin"].toString() + ">: " + iter.value()["ChatText"].toString());
 			}
 			this->textview->append("-----------------");
 			this->textview->append("---History End---");
@@ -187,16 +186,20 @@ RECV:
 			handleHeartbeat(msgMap["Origin"].toInt());
 		} else if (msgMap["Type"] == QString::fromStdString("RequestAllMsg")) {
 			done = true;
+			qDebug() << "Got RequestAllMsg from " << msgMap["Origin"];
 			handleRequestAllMsg(msgMap["Origin"].toInt());
 		}
 	}
 
+SKIP:
 	if (!done) {
+		qDebug() << "recv:";
+		qDebug() << allMsgsMap;
 		if (allMsgsMap.contains("Type") && allMsgsMap["Type"][0]["Type"] == "AllMsgs") {
 			handleAllMsg(allMsgsMap);
 		}
 	}
-SKIP:
+
     if (udpSocket->hasPendingDatagrams()) {
 		goto RECV;
 	}
@@ -277,8 +280,7 @@ void ChatDialog:: addToCommittedMsgs(const QVariantMap &qMap) {
 
 	committedMsgs.insert(seqNo, msg);
 	
-	this->textview->append(committedMsgs[nextSeqToShow]["Origin"].toString() + ">: " + committedMsgs[nextSeqToShow]["ChatText"].toString());
-	nextSeqToShow ++;
+	this->textview->append(committedMsgs[seqNo]["Origin"].toString() + ">: " + committedMsgs[seqNo]["ChatText"].toString());
 	// if any new messages, display in window
 	/* while (committedMsgs.contains(nextSeqToShow)) {
 		this->textview->append(committedMsgs[nextSeqToShow]["Origin"].toString() + ">: " + committedMsgs[nextSeqToShow]["ChatText"].toString());
@@ -325,8 +327,9 @@ void ChatDialog::handleProposeMsg(const QVariantMap &qMap) {
 	} else {
 
 		addToUncommittedMsgs(proposeMap);
-		nextSeqNo = proposeMap["SeqNo"].toInt() + 1;
-		qDebug() << "hereeeee";
+		if (proposeMap["SeqNo"].toInt() >= nextSeqNo) {
+			nextSeqNo = proposeMap["SeqNo"].toInt() + 1;
+		}
 		approveMsg(proposeMap);
 	}
 }
@@ -359,7 +362,7 @@ void ChatDialog::handleApproveMsg(const QVariantMap &qMap){
 }
 void ChatDialog::commitMsg(const QVariantMap &qMap) {
 	QVariantMap commitMap = qMap;
-	qDebug() << "in commitMsg::::" << qMap["ChatText"].toString();
+	qDebug() << "in commitMsg" << qMap["ChatText"].toString();
 	// add to committedMsgs
 	addToCommittedMsgs(commitMap);
 
@@ -522,7 +525,7 @@ void ChatDialog::handleRequestAllMsg(quint32 port) {
 void ChatDialog::sendAllMsg(quint32 port) {
 	qDebug() << "in sendAllMsg";
 	QMap<QString, QMap<quint32, QVariantMap> > qMap;
-	qMap["Type"][0]["Type"] = QString::fromStdString("ALLMSG");
+	qMap["Type"][0]["Type"] = QString::fromStdString("AllMsgs");
 	qMap["Committed"] = committedMsgs;
 	qMap["Uncommitted"] = uncommittedMsgs;
 	qMap["Leader"][0]["Leader"] = QString::number(leaderPort);
@@ -538,17 +541,27 @@ void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&q
 	if (leaderp != leaderPort) updateLeader(leaderp);
 	
 	QMap<quint32, QVariantMap> committedMsgsTmp = qMap["Committed"];
+	qDebug() << "!!!!!!!!!!!committedMsgsTmp" << committedMsgsTmp;
 	QMap<quint32, QVariantMap> uncommittedMsgsTmp = qMap["Uncommitted"];
-	for (qint32 i = 0; i < committedMsgs.size(); i++) {
-		quint32 seqNoTmp = uncommittedMsgsTmp[i]["SeqNo"].toInt();
-		if ( !committedMsgs.contains(seqNoTmp)) {
-			committedMsgs.insert(seqNoTmp, committedMsgsTmp[i]);
+	for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgsTmp.begin(); iter != committedMsgsTmp.end(); ++iter) {
+		quint32 seqNoTmp = iter.value()["SeqNo"].toInt();
+		if (seqNoTmp >= nextSeqNo) {
+			nextSeqNo = seqNoTmp + 1;
+		}
+		if (!committedMsgs.contains(seqNoTmp)) {
+			committedMsgs.insert(seqNoTmp, iter.value());
+		}
+		if (uncommittedMsgs.contains(seqNoTmp)) {
+			uncommittedMsgs.remove(seqNoTmp);
 		}
 	}
-	for (qint32 i = 0; i < uncommittedMsgs.size(); i++) {
-		quint32 seqNoTmp = uncommittedMsgsTmp[i]["SeqNo"].toInt();
-		if ( !uncommittedMsgs.contains(seqNoTmp) and !committedMsgs.contains(seqNoTmp)) {
-			uncommittedMsgsTmp.insert(seqNoTmp, uncommittedMsgsTmp[i]);
+	for (QMap<quint32, QVariantMap>::const_iterator iter = uncommittedMsgsTmp.begin(); iter != uncommittedMsgsTmp.end(); ++iter) {
+		quint32 seqNoTmp = iter.value()["SeqNo"].toInt();
+		if (seqNoTmp >= nextSeqNo) {
+			nextSeqNo = seqNoTmp + 1;
+		}
+		if (!uncommittedMsgs.contains(seqNoTmp) and !committedMsgs.contains(seqNoTmp)) {
+			uncommittedMsgsTmp.insert(seqNoTmp, uncommittedMsgsTmp[seqNoTmp]);
 		}
 	}
 
@@ -556,11 +569,11 @@ void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&q
 }
 
 void ChatDialog::restoreTimeoutHandler() {
-	this->textview->append("-----------------");
-	this->textview->append("---Restoring MSG---");
-	this->textview->append("-----------------");
-	for (qint32 i = 0; i < committedMsgs.size(); i++) {
-		this->textview->append(committedMsgs[i]["Origin"].toString() + ">: " + committedMsgs[i]["ChatText"].toString());
+	this->textview->append("--------------------");
+	this->textview->append("----Restored MSG----");
+	this->textview->append("--------------------");
+	for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgs.begin(); iter != committedMsgs.end(); ++iter) {
+		this->textview->append(iter.value()["Origin"].toString() + ">: " + iter.value()["ChatText"].toString());
 	}
 	restoreWaitingTimer->stop();
 }
