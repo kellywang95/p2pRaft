@@ -43,7 +43,7 @@ ChatDialog::ChatDialog()
 		exit(1);
 	
 	timeoutTimer = new QTimer(this);
-	timeoutTimer->start(2000);
+	timeoutTimer->start(1500 + genRandNum() % 2000);
 	connect(timeoutTimer, SIGNAL(timeout()),
             this, SLOT(timeoutHandler())); 
 
@@ -56,13 +56,14 @@ ChatDialog::ChatDialog()
 	connect(restoreWaitingTimer, SIGNAL(timeout()),
             this, SLOT(restoreTimeoutHandler())); 
 
-	startRaft = false;
+	startRaft = true;
 	for (int i = udpSocket->myPortMin; i <= udpSocket->myPortMax; i++) {
 		nodeStates[i] = QString::fromStdString("CANDIDATE");
 	}
 
 	nextSeqNo = 0;
 	currentVote = 0;
+	voteLeaderRound = 0;
 
 	// Register a callback on the textline's returnPressed signal
 	// so that we can send the message entered by the user.
@@ -116,13 +117,25 @@ void ChatDialog::gotReturnPressed()
 			newParts.pop_front();
 			newMsg["Origin"] = udpSocket->originName;
 			newMsg["ChatText"] = newParts.join(" ");
+			if (!startRaft) {
+				unsendMsgs.append(newMsg["ChatText"].toString());
+				textline->clear();
+				return;
+			}
 			proposeMsg(newMsg);
 		} else if (messageParts.size() == 2) {
 			if (messageParts[0] == QString::fromStdString("DROP")){
 				declineNodes[messageParts[1].toInt()] = true;
+				if (!startRaft) {
+					textline->clear();
+					return;
+				}
 			} else if (messageParts[0] == QString::fromStdString("RESTORE")){
-				quint32 nodeId = messageParts[1].toInt();
-				declineNodes[nodeId] = false;
+				declineNodes[messageParts[1].toInt()] = false;
+				if (!startRaft) {
+					textline->clear();
+					return;
+				}
 				requestAllMsg();
 				restoreWaitingTimer->start(1200);
 				// restore dropped msgs from nodeId
@@ -140,9 +153,7 @@ void ChatDialog::gotReadyRead() {
 	QMap<QString, QMap<quint32, QVariantMap> > allMsgsMap;
 	QHostAddress serverAdd;
 	quint16 serverPort;
-
 RECV:
-// TODO if (!startRaft) no proto opp;
 	QByteArray mapData(udpSocket->pendingDatagramSize(), Qt::Uninitialized);
 	udpSocket->readDatagram(mapData.data(), mapData.size(), &serverAdd, &serverPort);
 	QDataStream msgMapStream(&mapData, QIODevice::ReadOnly);
@@ -151,21 +162,25 @@ RECV:
 	allMsgsMapStream >> (allMsgsMap);
 
 	bool done = false;
+	if (!startRaft) {
+		goto SKIP;
+	}
+
+	if (declineNodes[serverPort]) {
+		qDebug() << "decline msg sent from" << msgMap["Origin"];
+		if (msgMap["SeqNo"].toInt() >= nextSeqNo) {
+			nextSeqNo = msgMap["SeqNo"].toInt()+1;
+		}
+		goto SKIP;
+	}
 
 	if (msgMap.contains("Type"))
 	{
 		qDebug() << "recv:";
 		qDebug() << msgMap;
-		if (declineNodes[msgMap["Origin"].toInt()]) {
-			qDebug() << "decline msg sent from" << msgMap["Origin"];
-			if (msgMap["SeqNo"].toInt() >= nextSeqNo) {
-				nextSeqNo = msgMap["SeqNo"].toInt()+1;
-			}
-			goto SKIP;
-		}
 		if (msgMap["Type"] == QString::fromStdString("LeaderPropose")) {
 			done = true;
-			handleProposeLeader(msgMap["Origin"].toInt());
+			handleProposeLeader(msgMap["Origin"].toInt(), msgMap["Round"].toInt());
 		} else if (msgMap["Type"] == QString::fromStdString("LeaderApprove")) {
 			done = true;
 			handleApproveLeader(msgMap["Origin"].toInt());
@@ -191,7 +206,6 @@ RECV:
 		}
 	}
 
-SKIP:
 	if (!done) {
 		qDebug() << "recv:";
 		qDebug() << allMsgsMap;
@@ -200,6 +214,7 @@ SKIP:
 		}
 	}
 
+SKIP:
     if (udpSocket->hasPendingDatagrams()) {
 		goto RECV;
 	}
@@ -212,27 +227,33 @@ void ChatDialog::timeoutHandler() {
 	// qDebug() << "timeout!";
 
 	// reset currentVote and VoteToMe
+	voteLeaderRound++;
 	currentVote = 0;
 	VoteToMe.clear();
 	leaderPort = 0;
 	for (int i = udpSocket->myPortMin; i <= udpSocket->myPortMax; i++) {
 		nodeStates[i] = QString::fromStdString("CANDIDATE");
 	}
-	
-	//PROPOSE
-	proposeLeader();
+	if (startRaft && leaderPort == 0) {
+		//PROPOSE
+		proposeLeader();
+	}
 
-	timeoutTimer->start(2000);
+	timeoutTimer->start(1500 + genRandNum() % 2000);
 }
 
 void ChatDialog::heartbeatHandler() {
 	// qDebug() << "in heartbeatHandler!";
 
-	if (myStates() == QString::fromStdString("LEADER")) {
-		qDebug() << "send heartBeat!";
-		sendHeartbeat();
-		timeoutTimer->start(2000);
+	if (startRaft) {
+		if (myStates() == QString::fromStdString("LEADER")) {
+			qDebug() << "send heartBeat!";
+			sendHeartbeat();
+			timeoutTimer->start(1500 + genRandNum() % 2000);
+		}
+		if (leaderPort != 0) resendMsgs();
 	}
+	
 	heartbeatTimer->start(800);
 }
 
@@ -397,24 +418,31 @@ void ChatDialog::proposeLeader() {
 	QVariantMap qMap;
 	qMap["Type"] = QString::fromStdString("LeaderPropose");
 	qMap["Origin"] = QString::number(udpSocket->myPort);
+	qMap["Round"] = QString::number(voteLeaderRound);
 
 	// send LeaderPropose msg to every other nodes
 	sendMsgToAll(qMap);
 }
 
 
-void ChatDialog::handleProposeLeader(quint32 port) {
+void ChatDialog::handleProposeLeader(quint32 port, quint32 round) {
 	qDebug() << "in handleProposeLeader:::" << QString::number(port);
 	// check if it has voted to anywhere in this round
-	if (currentVote == 0) {
-		// if not voted yet in this round
-		approveLeader(port);
+	if (leaderPort == 0) {
+		qDebug() << "no leaderPort";
+		if (currentVote == 0 || (currentVote == udpSocket->myPort && round > voteLeaderRound) && VoteToMe.size() == 1) {
+			if (currentVote == udpSocket->myPort) {
+				qDebug() << "robbing";
+				QStringList VoteToMeTMP;
+				VoteToMe = VoteToMeTMP;
+			}
+			currentVote = port;
+			approveLeader(port);
+			qDebug() << "VoteToMe" << VoteToMe;
+		}
 	} else {
-		// ignore this proposal
-		return;
+		qDebug() << "current leaderPort" << leaderPort;
 	}
-
-	// ??? heartbeatTimer->start(100);
 }
 
 
@@ -469,13 +497,13 @@ void ChatDialog::sendHeartbeat() {
 }
 
 void ChatDialog::handleHeartbeat(quint32 port) {
-
+	qDebug() << "get heartbeat";
 	if (port != leaderPort) {
 		updateLeader(port);
 	}
 
 	// reset timeout
-	timeoutTimer->start(2000);
+	timeoutTimer->start(1500 + genRandNum() % 2000);
 
 }
 
@@ -503,6 +531,20 @@ void ChatDialog::sendMsgToOthers(const QVariantMap &qMap) {
 
 }
 
+void ChatDialog::resendMsgs() {
+	QStringList unsendMsgsTmp;
+	for (int i = 0; i < unsendMsgs.size(); i++) {
+		QVariantMap newMsg;
+		newMsg["Origin"] = udpSocket->originName;
+		newMsg["ChatText"] = unsendMsgs[i];
+		if (!startRaft) {
+			unsendMsgsTmp.append(newMsg["ChatText"].toString());
+		} else {
+			proposeMsg(newMsg);
+		}
+	}
+	unsendMsgs = unsendMsgsTmp;
+}
 
 void ChatDialog::requestAllMsg() {
 	QVariantMap qMap;
@@ -557,6 +599,7 @@ void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&q
 	}
 	for (QMap<quint32, QVariantMap>::const_iterator iter = uncommittedMsgsTmp.begin(); iter != uncommittedMsgsTmp.end(); ++iter) {
 		quint32 seqNoTmp = iter.value()["SeqNo"].toInt();
+
 		if (seqNoTmp >= nextSeqNo) {
 			nextSeqNo = seqNoTmp + 1;
 		}
@@ -569,11 +612,13 @@ void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&q
 }
 
 void ChatDialog::restoreTimeoutHandler() {
-	this->textview->append("--------------------");
-	this->textview->append("----Restored MSG----");
-	this->textview->append("--------------------");
-	for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgs.begin(); iter != committedMsgs.end(); ++iter) {
-		this->textview->append(iter.value()["Origin"].toString() + ">: " + iter.value()["ChatText"].toString());
+	if (startRaft) {
+		this->textview->append("--------------------");
+		this->textview->append("----Restored MSG----");
+		this->textview->append("--------------------");
+		for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgs.begin(); iter != committedMsgs.end(); ++iter) {
+			this->textview->append(iter.value()["Origin"].toString() + ">: " + iter.value()["ChatText"].toString());
+		}
 	}
 	restoreWaitingTimer->stop();
 }
@@ -591,6 +636,13 @@ void ChatDialog::updateLeader(quint32 port) {
 
 QString ChatDialog::myStates(){
 	return nodeStates[udpSocket->myPort];
+}
+
+int ChatDialog::genRandNum() {
+    QDateTime current = QDateTime::currentDateTime();
+    uint msecs = current.toTime_t();
+    qsrand(msecs);
+    return qrand();
 }
 
 
@@ -661,4 +713,3 @@ int main(int argc, char **argv)
 	// Enter the Qt main loop; everything else is event driven
 	return app.exec();
 }
-
