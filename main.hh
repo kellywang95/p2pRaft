@@ -60,6 +60,8 @@ private:
 
 	quint32 nextSeqNo;
 	quint32 nextSeqToShow;
+	
+	quint32 voteLeaderRound;
 
 	bool startRaft;
 
@@ -75,6 +77,8 @@ private:
 	QMap<quint32, QVariantMap> committedMsgs;
 	QMap<quint32, QVariantMap> uncommittedMsgs;
 
+	QStringList unsendMsgs;
+
 	void addToUncommittedMsgs(const QVariantMap &qMap);
 	void addToCommittedMsgs(const QVariantMap &qMap);
 	void removeFromUncommittedMsgs(const QVariantMap &qMap);
@@ -87,7 +91,7 @@ private:
 	void handleCommitMsg(const QVariantMap &qMap);
 
 	void proposeLeader();
-	void handleProposeLeader(quint32 port);
+	void handleProposeLeader(quint32 port, quint32 round);
 	void approveLeader(quint32 port);
 	void handleApproveLeader(quint32 port);
 	void commitLeader(quint32 port);
@@ -98,14 +102,19 @@ private:
 	void sendAllMsg(quint32 port);	
 	void handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&qMap);
 
+
 	void sendMsgToAll(const QVariantMap &qMap);
 	void sendMsgToOthers(const QVariantMap &qMap);
+
+	void resendMsgs();
 
 	void sendHeartbeat();
 	void handleHeartbeat(quint32 port);
 
 	void updateLeader(quint32 port);
 	QString myStates();
+
+	int genRandNum();
 };
 
 
