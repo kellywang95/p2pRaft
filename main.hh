@@ -48,7 +48,6 @@ public slots:
 	void gotReadyRead();
 	void timeoutHandler();
 	void heartbeatHandler();
-	void restoreTimeoutHandler();
 
 private:
 	QTextEdit *textview;
@@ -56,7 +55,6 @@ private:
 	NetSocket *udpSocket;
 	QTimer *timeoutTimer;
 	QTimer *heartbeatTimer;
-	QTimer *restoreWaitingTimer;
 
 	quint32 nextSeqNo;
 	quint32 nextSeqToShow;
