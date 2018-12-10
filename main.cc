@@ -43,18 +43,15 @@ ChatDialog::ChatDialog()
 		exit(1);
 	
 	timeoutTimer = new QTimer(this);
-	timeoutTimer->start(1500 + genRandNum() % 2000);
+	timeoutTimer->start(500 + genRandNum() % 500);
 	connect(timeoutTimer, SIGNAL(timeout()),
             this, SLOT(timeoutHandler())); 
 
 	heartbeatTimer = new QTimer(this);
-	heartbeatTimer->start(800);
+	heartbeatTimer->start(250);
 	connect(heartbeatTimer, SIGNAL(timeout()),
             this, SLOT(heartbeatHandler())); 
 
-	restoreWaitingTimer = new QTimer(this);
-	connect(restoreWaitingTimer, SIGNAL(timeout()),
-            this, SLOT(restoreTimeoutHandler())); 
 
 	startRaft = true;
 	for (int i = udpSocket->myPortMin; i <= udpSocket->myPortMax; i++) {
@@ -86,6 +83,7 @@ void ChatDialog::gotReturnPressed()
 	}
 	if (messageParts.size() == 1) {
 		if (message == QString::fromStdString("START")) {
+			requestAllMsg();
 			startRaft = true;
 		} else if (message == QString::fromStdString("GET_CHAT")) {
 			this->textview->append("-----------------");
@@ -137,7 +135,6 @@ void ChatDialog::gotReturnPressed()
 					return;
 				}
 				requestAllMsg();
-				restoreWaitingTimer->start(1200);
 				// restore dropped msgs from nodeId
 				
 			}
@@ -239,7 +236,7 @@ void ChatDialog::timeoutHandler() {
 		proposeLeader();
 	}
 
-	timeoutTimer->start(1500 + genRandNum() % 2000);
+	timeoutTimer->start(500 + genRandNum() % 500);
 }
 
 void ChatDialog::heartbeatHandler() {
@@ -249,12 +246,12 @@ void ChatDialog::heartbeatHandler() {
 		if (myStates() == QString::fromStdString("LEADER")) {
 			qDebug() << "send heartBeat!";
 			sendHeartbeat();
-			timeoutTimer->start(1500 + genRandNum() % 2000);
+			timeoutTimer->start(500 + genRandNum() % 500);
 		}
 		if (leaderPort != 0) resendMsgs();
 	}
 	
-	heartbeatTimer->start(800);
+	heartbeatTimer->start(250);
 }
 
 void ChatDialog::addToUncommittedMsgs(const QVariantMap &qMap) {
@@ -503,7 +500,7 @@ void ChatDialog::handleHeartbeat(quint32 port) {
 	}
 
 	// reset timeout
-	timeoutTimer->start(1500 + genRandNum() % 2000);
+	timeoutTimer->start(500 + genRandNum() % 500);
 
 }
 
@@ -557,9 +554,9 @@ void ChatDialog::requestAllMsg() {
 
 void ChatDialog::handleRequestAllMsg(quint32 port) {
 	//send all msg only if is leader
-	//if (myStates() == QString::fromStdString("LEADER")) {
-	sendAllMsg(port);
-	//}
+	if (myStates() == QString::fromStdString("LEADER")) {
+		sendAllMsg(port);
+	}
 }
 
 
@@ -607,20 +604,14 @@ void ChatDialog::handleAllMsg(const QMap<QString, QMap<quint32, QVariantMap> >&q
 			uncommittedMsgsTmp.insert(seqNoTmp, uncommittedMsgsTmp[seqNoTmp]);
 		}
 	}
-
-
-}
-
-void ChatDialog::restoreTimeoutHandler() {
 	if (startRaft) {
-		this->textview->append("--------------------");
-		this->textview->append("----Restored MSG----");
-		this->textview->append("--------------------");
+		this->textview->append("---------------------");
+		this->textview->append("----Recovered MSG----");
+		this->textview->append("---------------------");
 		for (QMap<quint32, QVariantMap>::const_iterator iter = committedMsgs.begin(); iter != committedMsgs.end(); ++iter) {
 			this->textview->append(iter.value()["Origin"].toString() + ">: " + iter.value()["ChatText"].toString());
 		}
 	}
-	restoreWaitingTimer->stop();
 }
 
 
